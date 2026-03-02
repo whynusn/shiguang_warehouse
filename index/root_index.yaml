@@ -212,3 +212,9 @@ schools:
     name: "湖北汽车工业学院"
     initial: "H"
     resource_folder: "HUAT"    
+    resource_folder: "AHSZU"
+
+  - id: "XAUT"
+    name: "西安理工大学"
+    initial: "X"
+    resource_folder: "XAUT"
