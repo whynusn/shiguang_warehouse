@@ -1,11 +1,11 @@
-// 文件: school.js
+// 文件: capadap.js
 
 /**
  * 显示导入提示
  */
 async function promptUserToStart() {
     const confirmed = await window.AndroidBridgePromise.showAlert(
-        "导入提示",
+        "导入确认",
         "导入前请确保您已进入课表页面（运行->课表查询->我的课表）并等待页面加载完成",
         "开始导入"
     );
@@ -21,10 +21,8 @@ async function promptUserToStart() {
  * 获取 iframe 内容
  */
 function getIframeDocument() {
-    try {
-        console.log('开始获取 iframe 内容');
-        
-        // 尝试多种选择器找到 iframe
+    try { 
+        // 尝试多种选择器找到 iframe 以防修改
         const selectors = [
             '.iframe___1hsk7',
             '[class*="iframe"]',
@@ -70,6 +68,9 @@ function getIframeDocument() {
     }
 }
 
+/** 
+ * 计算每天课程节数
+ **/
 function getSectionByPosition(element) {
     const dayColumn = element.closest('.kbappTimetableDayColumnRoot');
     const dayCols = Array.from(dayColumn.parentNode.children);
@@ -100,7 +101,7 @@ function getSectionByPosition(element) {
     let end = start + Math.max(1, currentFlex) - 1;
 
 
-    // 午餐晚餐修正节数
+    // 这里的的start和end都加了午餐晚餐 午餐晚餐修正节数
     if (start >= 10) { 
         start -= 2;
         end -= 2;
@@ -122,7 +123,6 @@ function parseTimeSlots(iframeDoc) {
     const timeColumn = iframeDoc.querySelector('.kbappTimetableJcColumn');
     
     const timeItems = timeColumn.querySelectorAll('.kbappTimetableJcItem');
-    console.log('找到时间段数量:', timeItems.length);
     
     timeItems.forEach((item, index) => {
         const textElements = item.querySelectorAll('.kbappTimetableJcItemText');
@@ -146,7 +146,8 @@ function parseTimeSlots(iframeDoc) {
                     endTime: endTime
                 });
                 
-                console.log(`时间段 ${sectionNumber}: ${startTime} ~ ${endTime}`);
+                // console.log(`时间段 ${sectionNumber}: ${startTime} ~ ${endTime}`);
+
             }
         }
     });
@@ -250,7 +251,7 @@ function parseSingleCourse(courseElement, day, timeSlots) {
         };
         
     } catch (error) {
-        console.error('解析出错:', error);
+        // console.error('解析出错:', error);
         return null;
     }
 }
@@ -263,7 +264,7 @@ function parseCourses(iframeDoc, timeSlots) {
     
     // 获取所有星期列
     const dayColumns = iframeDoc.querySelectorAll('.kbappTimetableDayColumnRoot');
-    console.log('找到课表列数量:', dayColumns.length);
+    // console.log('找到课表列数量:', dayColumns.length);
     
     
     // 遍历每一天的列
@@ -273,7 +274,7 @@ function parseCourses(iframeDoc, timeSlots) {
         // 获取当天的所有课程
         const dayCourses = dayColumn.querySelectorAll('.kbappTimetableCourseRenderCourseItem');
         
-        console.log(`星期${dayIndex + 1} 课程数量:`, dayCourses.length);
+        // console.log(`星期${dayIndex + 1} 课程数量:`, dayCourses.length);
         
         dayCourses.forEach(courseElement => {
             const courseInfo = parseSingleCourse(courseElement, dayIndex + 1, timeSlots);
@@ -352,18 +353,34 @@ function parseAllData(iframeDoc) {
 /**
  * 课程去重   后期这里可能会出现问题
  */
+
 function removeDuplicates(courses) {
-    const seen = new Set();
-    return courses.filter(course => {
-        // 核心唯一键：星期 + 起始节次 + 课程名 + 周次
-        // 这样即使老师或地点写法稍有不同，只要是同一时间同一门课且周次一致，就会被去重
-        const key = `${course.day}-${course.startSection}-${course.name}-${course.weeks.join(',')}`;
-        if (seen.has(key)) {
-            return false;
+    const courseMap = new Map();
+    
+    courses.forEach(course => {
+        // 生成唯一键（不包括周次）
+        // 可以根据需要调整组合字段
+        const key = `${course.day}-${course.startSection}-${course.endSection}-${course.name}-${course.position}`;
+        
+        if (courseMap.has(key)) {
+            // 已存在：合并周次
+            const existing = courseMap.get(key);
+            // 合并并去重
+            const combinedWeeks = [...existing.weeks, ...course.weeks];
+            const uniqueWeeks = [...new Set(combinedWeeks)];
+            // 排序
+            existing.weeks = uniqueWeeks.sort((a, b) => a - b);
+            
+            // 如果需要，可以保留最早出现的教师（如果教师不同的话）
+            // 但这里保持原有逻辑，不更新教师
+        } else {
+            // 不存在：添加新记录
+            courseMap.set(key, {...course, weeks: [...course.weeks]});
         }
-        seen.add(key);
-        return true;
     });
+    
+    // 转换回数组
+    return Array.from(courseMap.values());
 }
 
 /**

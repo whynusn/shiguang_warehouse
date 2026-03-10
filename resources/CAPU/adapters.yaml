@@ -6,4 +6,4 @@ adapters:
     asset_js_path: "capadap.js"
     import_url: "https://webvpn.cap.edu.cn/"
     maintainer: "Xuan-Xuann"
-    description: "适配成都航空职业技术大学教务系统"
+    description: "适配成都航空职业技术大学。导入前请确保您已进入课表页面(运行->课表查询->我的课表)有任何问题请通过GitHub/QQ联系开发者。"
