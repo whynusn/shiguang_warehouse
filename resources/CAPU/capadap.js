@@ -1,4 +1,4 @@
-// 文件: capadap.js
+// 文件: school.js
 
 /**
  * 显示导入提示
@@ -67,6 +67,118 @@ function getIframeDocument() {
         return null;
     }
 }
+
+/**
+ * 解析开学时间
+ */
+function extractStartDate() {
+    const iframdate = getIframeDocument();
+    if (!iframdate) return null;
+
+    try {
+        const dayElement = iframdate.querySelector('.kbappTimeZCText');  //<div class="kbappTimeZCText">第1周(3/9 ~ 3/15)</div>
+        const semesterElement = iframdate.querySelector('.kbappTimeXQText');  //<div class="kbappTimeXQText">2025-2026学年 第2学期</div>
+        if (!dayElement || !semesterElement) {
+            return null;
+        }
+        const dayText = dayElement.textContent.trim();  //  第1周(3/9 ~ 3/15)
+        const semesterText = semesterElement.textContent.trim();  //  2025-2026学年 第2学期  
+        const startDate = parseStartDate(dayText, semesterText);
+        // 要判断是第几学期来选择开学年
+
+        return {startDate};  //传入解析后数据
+    }
+
+    catch (error) {
+        console.error('解析开学时间时出错:', error);
+        AndroidBridge.showToast(`解析开学时间失败: ${error.message}`);
+        return null;
+    }
+        
+}
+
+/**
+ * 解析开学时间
+ * @param {string} weekText - 周次文本，如 "第1周(3/9 ~ 3/15)"
+ * @param {string} semesterText - 学期文本，如 "2025-2026学年 第2学期"
+ * @returns {string} 开学日期 YYYY-MM-DD
+ */
+function parseStartDate(weekText, semesterText) {
+    // 1. 解析学期信息，获取学年和学期
+    const semesterMatch = semesterText.match(/(\d{4})-(\d{4})学年\s*第(\d)学期/);
+    if (!semesterMatch) {
+        throw new Error('无法解析学期信息');
+    }
+    
+    const startYear = parseInt(semesterMatch[1]); // 2025
+    const endYear = parseInt(semesterMatch[2]);   // 2026
+    const semester = parseInt(semesterMatch[3]);  // 1 或 2
+    
+    // 2. 解析周次信息，获取月份和日期范围
+    const weekMatch = weekText.match(/第(\d+)周\((\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})\)/);
+    if (!weekMatch) {
+        throw new Error('无法解析周次信息');
+    }
+    
+    const weekNumber = parseInt(weekMatch[1]);     // 周数
+    const startMonth = parseInt(weekMatch[2]);     // 开始月份
+    const startDay = parseInt(weekMatch[3]);       // 开始日期
+    const endMonth = parseInt(weekMatch[4]);       // 结束月份
+    const endDay = parseInt(weekMatch[5]);         // 结束日期
+    
+    console.log(`解析结果: 第${weekNumber}周, ${startMonth}/${startDay} ~ ${endMonth}/${endDay}`);
+    
+    // 3. 根据学期判断开学年份
+    let startYearForDate;
+    
+    if (semester === 1) {
+        // 第一学期：开学在 startYear 年
+        startYearForDate = startYear;
+    } else {
+        // 第二学期：开学在 endYear 年（通常跨年）
+        startYearForDate = endYear;
+    }
+    
+    // 特殊情况处理：如果开始月份小于当前月份，可能需要调整年份
+    // 比如 1月开学应该是 endYear 年
+    const currentMonth = new Date().getMonth() + 1;
+    if (startMonth < 6 && semester === 2) {
+        // 第二学期如果在1-6月开学，应该用 endYear
+        startYearForDate = endYear;
+    }
+    
+    // 4. 构建开学日期（假设是第1周的周一，或者就用开始日期）
+    // 这里用开始日期作为参考
+    const startDateStr = `${startYearForDate}-${String(startMonth).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
+    
+    // 5. 如果是第1周，直接返回开始日期
+    if (weekNumber === 1) {
+        console.log(`开学日期: ${startDateStr}`);
+        return startDateStr;
+    }
+    
+    // 6. 如果不是第1周，需要往前推算
+    // 计算第1周的日期
+    const startDate = new Date(startYearForDate, startMonth - 1, startDay);
+    const daysToSubtract = (weekNumber - 1) * 7;
+    startDate.setDate(startDate.getDate() - daysToSubtract);
+    
+    const firstWeekStartDate = formatDate(startDate);
+
+    return firstWeekStartDate;
+}
+
+/**
+ * 格式化日期为 YYYY-MM-DD
+ */
+function formatDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+
 
 /** 
  * 计算每天课程节数
@@ -389,11 +501,32 @@ function removeDuplicates(courses) {
 async function saveCourses(parsedData) {
     const { courses, timeSlots } = parsedData;
     
+            // 解析开学时间
     try {
+        const startDateInfo = extractStartDate();
+        if (!startDateInfo) {
+            AndroidBridge.showToast("获取开学时间失败");
+        }
+        
+        const configData = {
+            semesterStartDate: startDateInfo?.startDate || null,  // 如果获取失败就传 null
+        }
+
+        AndroidBridge.showToast(`准备保存开学时间 ${startDateInfo.startDate}`);
+
+        let courseSaveResult = await window.AndroidBridgePromise.saveCourseConfig (
+            JSON.stringify(configData)  
+        );
+        
+        if (!courseSaveResult) {
+            AndroidBridge.showToast("保存开学时间失败，请自行设定");
+        }
+
+
         AndroidBridge.showToast(`准备保存 ${courses.length} 门课程...`);
         
         // 保存课程数据
-        const courseSaveResult = await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(courses));
+        courseSaveResult = await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(courses));
         if (!courseSaveResult) {
             AndroidBridge.showToast("保存课程失败");
             return false;
@@ -417,6 +550,9 @@ async function saveCourses(parsedData) {
         AndroidBridge.showToast(`保存失败: ${error.message}`);
         return false;
     }
+}
+async function fitTimes() {
+    
 }
 
 /**
@@ -449,6 +585,8 @@ async function runImportFlow() {
             );
             return;
         }
+
+ 
         
         // 5. 显示预览
         const previewMsg = `找到 ${parsedData.courses.length} 门课程\n${parsedData.timeSlots.length} 个时间段\n\n是否继续导入？`;
