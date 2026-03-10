@@ -23,6 +23,11 @@ schools:
     initial: "Q"
     resource_folder: "qingguo_jiaowu"
 
+  - id: "urp_jiaowu"
+    name: "URP教务-通用教务"
+    initial: "U"
+    resource_folder: "urp_jiaowu"    
+
   - id: "CQU"
     name: "重庆大学"
     initial: "C"
