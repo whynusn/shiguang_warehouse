@@ -1,4 +1,4 @@
-// 文件: school.js
+// 文件: capadap.js
 
 /**
  * 显示导入提示
