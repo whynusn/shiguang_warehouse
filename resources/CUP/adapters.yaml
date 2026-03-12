@@ -14,4 +14,4 @@ adapters:
     asset_js_path: "cup_02.js"
     import_url: "https://gmis.cup.edu.cn/gmis/student/default/index"
     maintainer: "larryyan"
-    description: "点击统一身份认证登录\n打开(培养管理=>学生课表查询)页面。\n包含克拉玛依校区(上课时间错误请反馈开发者)。"
+    description: "点击统一身份认证登录\n打开(培养管理=>学生课表查询)页面。\n包含克拉玛依校区"
