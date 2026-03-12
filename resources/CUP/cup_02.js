@@ -1,470 +1,176 @@
 // resources/CUP/cup_02.js
+// 中国石油大学(北京)拾光课程表适配脚本
+// https://gmis.cup.edu.cn/gmis/student/default/index
+// 教务平台：南京南软
+// 适配开发者：larryyan
 
-// 1. 显示一个公告信息弹窗
-async function promptUserToStart() {
-    try {
-        console.log("即将显示公告弹窗...");
-        const confirmed = await window.AndroidBridgePromise.showAlert(
-            "重要通知",
-            "导入前请确保您已成功登录教务系统，并选定正确的学期。",
-            "好的，开始"
-        );
-        if (confirmed) {
-            console.log("用户点击了确认按钮。Alert Promise Resolved: " + confirmed);
-            AndroidBridge.showToast("Alert：用户点击了确认！");
-            return true; // 成功时返回 true
-        } else {
-            console.log("用户点击了取消按钮或关闭了弹窗。Alert Promise Resolved: " + confirmed);
-            AndroidBridge.showToast("Alert：用户取消了！");
-            return false; // 用户取消时返回 false
+// ==========================================
+// 1. 全局配置与工具类
+// ==========================================
+
+const CONFIG = {
+    campuses: {
+        MainCampus: {
+            name: "主校区",
+            starts: { morning: "08:00", afternoon: "13:30", evening: "18:30" },
+            counts: { morning: 4, afternoon: 4, evening: 3 },
+            breaks: { short: 5, long: 30, longAfter: { morning: 2, afternoon: 2, evening: 0 } },
+            classMins: 45
+        },
+        Karamay: {
+            name: "克拉玛依校区",
+            starts: { morning: "09:30", afternoon: "16:00", evening: "20:30" },
+            counts: { morning: 5, afternoon: 4, evening: 3 },
+            breaks: { short: 5, long: 20, longAfter: { morning: 2, afternoon: 2, evening: 0 } },
+            classMins: 45
         }
-    } catch (error) {
-        console.error("显示公告弹窗时发生错误:", error);
-        AndroidBridge.showToast("Alert：显示弹窗出错！" + error.message);
-        return false; // 出现错误时也返回 false
     }
-}
+};
 
-// 2. 选择校区
-async function selectCampus() {
-    try {
-        const campuses = ["本校", "克拉玛依校区"];
-        
-        // 呼叫安卓原生弹窗
-        const selectedIndex = await window.AndroidBridgePromise.showSingleSelection(
-            "选择所在校区", 
-            JSON.stringify(campuses), 
-            0 // 默认选中第一个（本校）
-        );
-
-        if (selectedIndex !== null && selectedIndex >= 0) {
-            const selectedCampus = campuses[selectedIndex];
-            if (typeof AndroidBridge !== 'undefined' && AndroidBridge.showToast) {
-                AndroidBridge.showToast("已选择: " + selectedCampus);
-            }
-            // 返回 true 代表是克拉玛依校区，返回 false 代表是本校
-            return selectedIndex === 1; 
-        } else {
-            // 用户取消了选择
-            if (typeof AndroidBridge !== 'undefined' && AndroidBridge.showToast) {
-                AndroidBridge.showToast("取消导入：未选择校区。");
-            }
-            return null;
-        }
-    } catch (error) {
-        console.error("选择校区时发生错误:", error);
-        return null; 
-    }    
-}
-
-// 3. 获取学期信息
-async function getTermCode() {
-    try {
-        if (typeof AndroidBridge !== 'undefined') AndroidBridge.showToast("正在获取学期列表...");
-
-        // 检查环境是否支持 jQuery
-        if (typeof $ === 'undefined' || !$.ajax) {
-            throw new Error("未检测到 jQuery 环境，请确保在正确的课表页面执行。");
-        }
-
-        // 1. 请求学期列表数据
-        const termData = await new Promise((resolve, reject) => {
-            $.ajax({
-                type: 'get',
-                dataType: 'json',
-                url: '/gmis/default/bindterm',
-                cache: false, // 自动附加时间戳防止缓存
-                success: function (data) {
-                    resolve(data);
-                },
-                error: function (xhr, status, error) {
-                    reject(new Error(`网络请求失败，状态码: ${xhr.status} ${error}`));
-                }
-            });
-        });
-
-        if (!termData || termData.length === 0) {
-            throw new Error("未能获取到有效的学期列表数据。");
-        }
-
-        // 2. 提取文本、值，并寻找当前默认学期的索引
-        const semesterTexts = [];
-        const semesterValues = [];
-        let defaultSelectedIndex = 0; // 默认选中第一项
-
-        termData.forEach((item, index) => {
-            semesterTexts.push(item.termname);
-            semesterValues.push(item.termcode);
-            // 如果数据中带有 selected: true，则将其设为默认选中
-            if (item.selected) {
-                defaultSelectedIndex = index;
-            }
-        });
-
-        // 3. 呼叫安卓原生弹窗
-        const selectedIndex = await window.AndroidBridgePromise.showSingleSelection(
-            "选择导入学期", 
-            JSON.stringify(semesterTexts), 
-            defaultSelectedIndex
-        );
-
-        // 4. 判断用户选择结果
-        if (selectedIndex !== null && selectedIndex >= 0) {
-            const selectedValue = semesterValues[selectedIndex];
-            if (typeof AndroidBridge !== 'undefined' && AndroidBridge.showToast) {
-                AndroidBridge.showToast("已选择学期: " + semesterTexts[selectedIndex]);
-            }
-            return selectedValue; 
-        } else {
-            // 用户取消了选择
-            if (typeof AndroidBridge !== 'undefined' && AndroidBridge.showToast) {
-                AndroidBridge.showToast("取消导入：未选择学期。");
-            }
-            return null;
-        }
-
-    } catch (error) {
-        console.error("读取学期信息时发生错误:", error);
-        if (typeof AndroidBridge !== 'undefined' && AndroidBridge.showToast) {
-            AndroidBridge.showToast("Alert：读取学期信息出错！" + error.message);
-        }
-        return null; 
-    }    
-}
-
-// 4. 获取课程数据
-async function fetchData(termCode) {
-    try {
-        // 检查环境是否支持 jQuery 拦截解密
-        if (typeof $ === 'undefined' || !$.ajax) {
-            throw new Error("未检测到 jQuery 环境，请确保在正确的课表页面执行。");
-        }
-
-        // 将 $.ajax 包装成标准的 Promise，无缝融入 async/await 流程
-        const response = await new Promise((resolve, reject) => {
-            $.ajax({
-                type: 'post',
-                dataType: 'json',
-                url: "../pygl/py_kbcx_ew",
-                data: { 'kblx': 'xs', 'termcode': termCode },
-                cache: false,
-                success: function (data) {
-                    resolve(data);
-                },
-                error: function (xhr, status, error) {
-                    reject(new Error(`网络请求失败，状态码: ${xhr.status} ${error}`));
-                }
-            });
-        });
-
-        // 校验返回的数据结构
-        if (!response || !response.rows) {
-            throw new Error("接口返回数据为空或解密后格式不正确");
-        }
-
-        return response.rows;
-
-    } catch (error) {
-        console.error("获取数据时发生错误:", error);
-        AndroidBridge.showToast("Alert：获取数据出错！" + error.message);
-        return null;
-    }
-}
-
-// 5. 导入课程数据
-async function parseCourses(py_kbcx_ew, isKaramayCampus) {
-    console.log("正在解析研究生课程数据...");
-    
-    // 用于存放每一小节课的临时数组
-    let allCourseBlocks = [];
-
-    // 辅助函数 1：将 jcid 转换为标准的拾光节次 (1~12节)
-    // 根据数据：上午11-15 -> 1-5节，下午21-24 -> 6-9节，晚上31-33 -> 10-12节
-    function getStandardSection(jcid) {
-        if (jcid >= 11 && jcid <= 15) return jcid - 10;
-        if (jcid >= 21 && jcid <= 24) return jcid - 20 + 5; 
-        if (jcid >= 31 && jcid <= 33) return jcid - 30 + 9;
-        return 1; // 默认兜底
-    }
-
-    // 辅助函数 2：解析类似 "连续周 1-12周" 或 "单周 1-11周" 的字符串，返回数字数组
-    function parseWeeks(weekStr) {
+const Utils = {
+    toast: (msg) => { if (typeof AndroidBridge !== 'undefined') AndroidBridge.showToast(msg); },
+    timeToMins: (timeStr) => { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; },
+    minsToTime: (mins) => `${Math.floor(mins / 60).toString().padStart(2, '0')}:${(mins % 60).toString().padStart(2, '0')}`,
+    parseWeeks: (weekStr) => {
         let weeks = [];
-        let isSingle = weekStr.includes('单');
-        let isDouble = weekStr.includes('双');
-
-        // 匹配字符串里的所有数字或数字范围 (如 "1", "1-12")
-        let matches = weekStr.match(/\d+-\d+|\d+/g);
-        if (matches) {
-            matches.forEach(m => {
-                if (m.includes('-')) {
-                    let [start, end] = m.split('-').map(Number);
-                    for (let i = start; i <= end; i++) {
-                        if (isSingle && i % 2 === 0) continue;
-                        if (isDouble && i % 2 !== 0) continue;
-                        weeks.push(i);
-                    }
-                } else {
-                    let w = Number(m);
-                    if (isSingle && w % 2 === 0) return;
-                    if (isDouble && w % 2 !== 0) return;
-                    weeks.push(w);
-                }
-            });
-        }
+        let isSingle = weekStr.includes('单'), isDouble = weekStr.includes('双');
+        (weekStr.match(/\d+-\d+|\d+/g) || []).forEach(m => {
+            let [start, end] = m.includes('-') ? m.split('-').map(Number) : [Number(m), Number(m)];
+            for (let i = start; i <= end; i++) {
+                if ((isSingle && i % 2 === 0) || (isDouble && i % 2 !== 0)) continue;
+                weeks.push(i);
+            }
+        });
         return [...new Set(weeks)].sort((a, b) => a - b);
     }
+};
 
-    // --- 第一步：将按“行”排列的数据，拆解提取出每一小节课 ---
-    py_kbcx_ew.forEach(row => {
-        if (!isKaramayCampus && row.jcid === 15) {
-            return; 
-        }
+function validateDateInput(input) {
+    return /^\d{4}[-\/\.]\d{2}[-\/\.]\d{2}$/.test(input) ? false : "格式错误，例: 2025-09-01";
+}
 
-        let currentSection = getStandardSection(row.jcid);
-        // 遍历星期一 (z1) 到星期日 (z7)
-        for (let day = 1; day <= 7; day++) {
-            let zVal = row['z' + day];
-            if (zVal) {
-                // 如果同一个时间有两门课（比如单双周不同），按 <br/> 拆分
-                let classParts = zVal.split(/<br\s*\/?>/i); 
-                
-                classParts.forEach(part => {
-                    // 核心正则表达式：匹配 "课程名[周次]老师[地点]"
-                    // 兼容没有老师或没有地点的情况
-                    let match = part.match(/(.*?)\[(.*?)\]([^\[]*)(?:\[(.*?)\])?$/);
-                    
-                    if (match) {
-                        allCourseBlocks.push({
-                            name: match[1].trim(),                   // 提取：课程名
-                            weekStr: match[2].trim(),                // 提取：原始周次字符串 (用于后续比对)
-                            weeks: parseWeeks(match[2]),             // 解析：纯数字周次数组
-                            teacher: match[3] ? match[3].trim() : "",// 提取：老师
-                            position: match[4] ? match[4].trim() : "未知地点", // 提取：上课地点
-                            day: day,                                // 星期几
-                            section: currentSection                  // 当前是第几节
-                        });
-                    }
-                });
-            }
-        }
-    });
+// ==========================================
+// 2. 核心业务流程
+// ==========================================
 
-    // --- 第二步：将连续的小节课“合并”成一门完整的课 ---
-    let mergedCourses = [];
-    allCourseBlocks.forEach(block => {
-        // 寻找是否已经有相邻的课可以合并 (同星期、同课名、同老师、同地点、同周次，且节次刚好挨着)
-        let existingCourse = mergedCourses.find(c => 
-            c.day === block.day &&
-            c.name === block.name &&
-            c.teacher === block.teacher &&
-            c.position === block.position &&
-            c.weekStr === block.weekStr &&
-            c.endSection === block.section - 1 // 核心：判断是否紧挨着上一节
-        );
+async function selectCampus() {
+    const ids = Object.keys(CONFIG.campuses);
+    const labels = ids.map(id => CONFIG.campuses[id].name);
+    const index = await window.AndroidBridgePromise.showSingleSelection("选择所在校区", JSON.stringify(labels), 0);
+    return index !== null ? ids[index] : null;
+}
 
-        if (existingCourse) {
-            // 如果可以合并，就把结束节次往后延
-            existingCourse.endSection = block.section;
-        } else {
-            // 如果不能合并，就作为一门新课加入
-            mergedCourses.push({
-                name: block.name,
-                teacher: block.teacher,
-                position: block.position,
-                day: block.day,
-                startSection: block.section,
-                endSection: block.section,
-                weeks: block.weeks,
-                weekStr: block.weekStr // 保留用于比对合并
+async function getTermCode() {
+    if (typeof $ === 'undefined') throw new Error("缺少环境，请在课表页执行");
+    const data = await $.ajax({ type: 'get', url: '/gmis/default/bindterm', dataType: 'json', cache: false });
+    if (!data || !data.length) throw new Error("获取学期列表失败");
+
+    const texts = data.map(i => i.termname);
+    const codes = data.map(i => i.termcode);
+    const defaultIdx = data.findIndex(i => i.selected) || 0;
+
+    const index = await window.AndroidBridgePromise.showSingleSelection("选择导入学期", JSON.stringify(texts), defaultIdx);
+    return index !== null ? codes[index] : null;
+}
+
+async function fetchCourseData(termCode) {
+    Utils.toast("正在解析数据...");
+    const data = await $.ajax({ type: 'post', url: "py_kbcx_ew", data: { kblx: 'xs', termcode: termCode }, dataType: 'json', cache: false });
+    if (!data || !data.rows) throw new Error("接口数据异常");
+    return data.rows;
+}
+
+async function processAndSaveCourses(rawData, campusId) {
+    const isKaramay = campusId === "Karamay";
+    let allBlocks = [], mergedCourses = [];
+
+    const getSec = (jcid) => {
+        if (jcid >= 11 && jcid <= 15) return jcid - 10;
+        if (jcid >= 21 && jcid <= 24) return jcid - 20 + (isKaramay ? 5 : 4);
+        if (jcid >= 31 && jcid <= 33) return jcid - 30 + (isKaramay ? 9 : 8);
+        return 1;
+    };
+
+    rawData.forEach(row => {
+        if (!isKaramay && row.jcid === 15) return;
+        const currentSec = getSec(row.jcid);
+        for (let d = 1; d <= 7; d++) {
+            if (!row['z' + d]) continue;
+            row['z' + d].split(/<br\s*\/?>/i).forEach(part => {
+                const match = part.match(/(.*?)\[(.*?)\]([^\[]*)(?:\[(.*?)\])?$/);
+                if (match) allBlocks.push({ name: match[1].trim(), weekStr: match[2].trim(), weeks: Utils.parseWeeks(match[2]), teacher: (match[3] || "").trim(), position: (match[4] || "未知地点").trim(), day: d, section: currentSec });
             });
         }
     });
 
-    // 清理掉多余的辅助比对字段，输出最终给拾光 App 的标准格式
-    const finalCourses = mergedCourses.map(c => {
-        delete c.weekStr; 
-        return c;
+    allBlocks.forEach(b => {
+        let exist = mergedCourses.find(c => c.day === b.day && c.name === b.name && c.teacher === b.teacher && c.weekStr === b.weekStr && c.endSection === b.section - 1);
+        exist ? exist.endSection = b.section : mergedCourses.push({ ...b, startSection: b.section, endSection: b.section });
     });
 
-    console.log("最终生成的标准课表数据：", finalCourses);
-
-    try {
-        console.log("正在尝试导入课程...");
-        const result = await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(finalCourses));
-        if (result === true) {
-            console.log("课程导入成功！");
-            AndroidBridge.showToast("测试课程导入成功！");
-        } else {
-            console.log("课程导入未成功，结果：" + result);
-            AndroidBridge.showToast("测试课程导入失败，请查看日志。");
-        }
-    } catch (error) {
-        console.error("导入课程时发生错误:", error);
-        AndroidBridge.showToast("导入课程失败: " + error.message);
+    mergedCourses.forEach(c => delete c.weekStr);
+    
+    if (!(await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(mergedCourses)))) {
+        throw new Error("课程保存失败");
     }
 }
 
-// 6. 导入预设时间段
-async function importPresetTimeSlots(campusIsKaramay) {
-    console.log("正在准备预设时间段数据...");
-    const presetTimeSlots = [
-        { "number": 1, "startTime": "08:00", "endTime": "08:45" },
-        { "number": 2, "startTime": "08:50", "endTime": "09:35" },
-        { "number": 3, "startTime": "10:05", "endTime": "10:50" },
-        { "number": 4, "startTime": "10:55", "endTime": "11:40" },
-        { "number": 5, "startTime": "13:30", "endTime": "14:15" },
-        { "number": 6, "startTime": "14:20", "endTime": "15:05" },
-        { "number": 7, "startTime": "15:35", "endTime": "16:20" },
-        { "number": 8, "startTime": "16:25", "endTime": "17:10" },
-        { "number": 9, "startTime": "18:30", "endTime": "19:15" },
-        { "number": 10, "startTime": "19:20", "endTime": "20:05" },
-        { "number": 11, "startTime": "20:10", "endTime": "20:55" },
-        { "number": 12, "startTime": "21:00", "endTime": "21:45" }
-    ];
+async function generateAndSaveTimeSlots(campusId) {
+    const c = CONFIG.campuses[campusId];
+    let slots = [], secNum = 1;
 
-    const presetTimeSlotsKaramay = [
-        { "number": 1, "startTime": "08:00", "endTime": "08:45" },
-        { "number": 2, "startTime": "08:50", "endTime": "09:35" },
-        { "number": 3, "startTime": "10:05", "endTime": "10:50" },
-        { "number": 4, "startTime": "10:55", "endTime": "11:40" },
-        { "number": 5, "startTime": "12:00", "endTime": "12:45" },
-        { "number": 6, "startTime": "13:30", "endTime": "14:15" },
-        { "number": 7, "startTime": "14:20", "endTime": "15:05" },
-        { "number": 8, "startTime": "15:35", "endTime": "16:20" },
-        { "number": 9, "startTime": "16:25", "endTime": "17:10" },
-        { "number": 10, "startTime": "18:30", "endTime": "19:15" },
-        { "number": 11, "startTime": "19:20", "endTime": "20:05" },
-        { "number": 12, "startTime": "20:10", "endTime": "20:55" },
-        { "number": 13, "startTime": "21:00", "endTime": "21:45" }
-    ];
-
-    try {
-        console.log("正在尝试导入预设时间段...");
-        const result = await window.AndroidBridgePromise.savePresetTimeSlots(JSON.stringify(campusIsKaramay ? presetTimeSlotsKaramay : presetTimeSlots));
-        if (result === true) {
-            console.log("预设时间段导入成功！");
-            window.AndroidBridge.showToast("测试时间段导入成功！");
-        } else {
-            console.log("预设时间段导入未成功，结果：" + result);
-            window.AndroidBridge.showToast("测试时间段导入失败，请查看日志。");
+    ["morning", "afternoon", "evening"].forEach(period => {
+        let mins = Utils.timeToMins(c.starts[period]);
+        for (let i = 1; i <= c.counts[period]; i++) {
+            const start = Utils.minsToTime(mins);
+            mins += c.classMins;
+            slots.push({ number: secNum++, startTime: start, endTime: Utils.minsToTime(mins) });
+            if (i < c.counts[period]) mins += (i === c.breaks.longAfter[period] ? c.breaks.long : c.breaks.short);
         }
-    } catch (error) {
-        console.error("导入时间段时发生错误:", error);
-        window.AndroidBridge.showToast("导入时间段失败: " + error.message);
+    });
+
+    if (!(await window.AndroidBridgePromise.savePresetTimeSlots(JSON.stringify(slots)))) {
+        throw new Error("时间段保存失败");
     }
 }
 
-/**
- * 验证开学日期的输入格式
- * 规范：验证通过返回 false，验证失败返回 错误信息字符串
- */
-function validateDateInput(input) {
-    // 匹配 YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD 格式
-    if (/^\d{4}[-\/\.]\d{2}[-\/\.]\d{2}$/.test(input)) {
-        return false; // 验证通过
-    } else {
-        return "请输入正确的日期格式，例如: 2025-09-01"; // 验证失败，原生 UI 会显示此提示
+async function promptAndSaveConfig() {
+    let date = await window.AndroidBridgePromise.showPrompt("输入开学日期", "格式: YYYY-MM-DD", "2026-03-09", "validateDateInput");
+    date = date ? date.trim().replace(/[\/\.]/g, '-') : "2026-03-09";
+
+    const cfg = { semesterStartDate: date, semesterTotalWeeks: 25, defaultClassDuration: 45, defaultBreakDuration: 5, firstDayOfWeek: 1 };
+    if (!(await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(cfg)))) {
+        throw new Error("配置保存失败");
     }
 }
 
-// 7. 导入课表配置
-async function saveConfig() {
-    console.log("正在准备配置数据...");
+// ==========================================
+// 3. 主流程引擎 (集中错误处理)
+// ==========================================
 
-    let startDate = await window.AndroidBridgePromise.showPrompt(
-        "输入开学日期", 
-        "请输入本学期开学日期 (格式: YYYY-MM-DD):",
-        "2025-09-01",          // 默认文本，给用户一个参考
-        "validateDateInput"    // 传入我们上面定义的全局验证函数名
-    );
-
-    // 如果返回 null，说明用户点击了取消
-    if (startDate === null) {
-        if (typeof AndroidBridge !== 'undefined') {
-            AndroidBridge.showToast("已取消开学日期设置，将使用默认配置。");
-        }
-        startDate = "2025-09-01"; // 兜底默认值，保证流程继续
-    } else {
-        // 容错处理：验证函数放过了 / 和 . ，我们在保存前把它统一替换成标准的横杠 -
-        startDate = startDate.trim().replace(/[\/\.]/g, '-');
-    }
-
-    // 注意：只传入要修改的字段，其他字段（如 semesterTotalWeeks）会使用 Kotlin 模型中的默认值
-    const courseConfigData = {
-        "semesterStartDate": startDate,
-        "semesterTotalWeeks": 25,
-        "defaultClassDuration": 45,
-        "defaultBreakDuration": 5,
-        "firstDayOfWeek": 1
-    };
-
-    try {
-        console.log("正在尝试导入课表配置...");
-        const configJsonString = JSON.stringify(courseConfigData);
-
-        const result = await window.AndroidBridgePromise.saveCourseConfig(configJsonString);
-
-        if (result === true) {
-            console.log("课表配置导入成功！");
-            AndroidBridge.showToast("测试配置导入成功！开学日期: " + startDate);
-        } else {
-            console.log("课表配置导入未成功，结果：" + result);
-            AndroidBridge.showToast("测试配置导入失败，请查看日志。");
-        }
-    } catch (error) {
-        console.error("导入配置时发生错误:", error);
-        AndroidBridge.showToast("导入配置失败: " + error.message);
-    }
-}
-
-
-/**
- * 编排整个课程导入流程。
- * 在任何一步用户取消或发生错误时，都会立即退出，AndroidBridge.notifyTaskCompletion()应该只在成功后调用  
- */
 async function runImportFlow() {
-    AndroidBridge.showToast("课程导入流程即将开始...");
+    try {
+        if (!(await window.AndroidBridgePromise.showAlert("导入通知", "请确保已在网页查看到课表。", "开始"))) return;
+        
+        const campusId = await selectCampus();
+        if (!campusId) return;
 
-    // 1. 公告和前置检查。
-    const alertConfirmed = await promptUserToStart();
-    if (!alertConfirmed) {
-        return; // 用户取消，立即退出函数
+        const termCode = await getTermCode();
+        if (!termCode) return;
+
+        const rawData = await fetchCourseData(termCode);
+        
+        await processAndSaveCourses(rawData, campusId);
+        await generateAndSaveTimeSlots(campusId);
+        await promptAndSaveConfig();
+
+        Utils.toast("🎉 课表导入成功！");
+        if (typeof AndroidBridge !== 'undefined') AndroidBridge.notifyTaskCompletion();
+
+    } catch (err) {
+        console.error("流程中止:", err);
+        Utils.toast("导入中断: " + err.message);
     }
-    
-    // 2. 选择校区。
-    const isKaramayCampus = await selectCampus();
-    if (isKaramayCampus === null) return;
-
-    // 3. 获取学期。
-    const termCode = await getTermCode();
-    if (termCode === null) {
-        AndroidBridge.showToast("导入已取消。");
-        // 用户取消，直接退出
-        return;
-    }
-
-    // 4. 获取课程数据
-    const py_kbcx_ew = await fetchData (termCode);
-    if (py_kbcx_ew === null) {
-        AndroidBridge.showToast("导入已取消。");
-        // 请求失败或无数据，直接退出
-        return;
-    }
-
-    // 5. 解析课程信息。
-    await parseCourses(py_kbcx_ew, isKaramayCampus);
-    
-    // 6. 导入时间段数据。
-    await importPresetTimeSlots(isKaramayCampus);
-    
-    // 7. 保存配置数据 (例如学期开始日期)
-    await saveConfig();
-
-    // 8. 流程**完全成功**，发送结束信号。
-    AndroidBridge.showToast("所有任务已完成！");
-    AndroidBridge.notifyTaskCompletion();
 }
 
-// 启动所有演示
 runImportFlow();
