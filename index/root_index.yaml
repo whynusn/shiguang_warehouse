@@ -292,3 +292,8 @@ schools:
     name: "济南大学"
     initial: "J"
     resource_folder: "UJN"
+    
+  - id: "HBGUHX"
+    name: "河北地质大学华信学院"
+    initial: "H"
+    resource_folder: "HBGUHX"
