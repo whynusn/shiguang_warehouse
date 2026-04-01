@@ -1,9 +1,9 @@
 # resources/CUST/adapters.yaml
 adapters:
   - adapter_id: "CAPU"
-    adapter_name: "成都航空职业技术大学教务"
+    adapter_name: "成都航空职业技术大学金智新教务"
     category: "BACHELOR_AND_ASSOCIATE"
     asset_js_path: "capadap.js"
-    import_url: "https://webvpn.cap.edu.cn/"
+    import_url: "https://jwxt.cap.edu.cn/jwapp/sys/homeapp/home/index.html?av=&contextPath=/jwapp#/"
     maintainer: "Xuan-Xuann"
-    description: "适配成都航空职业技术大学。导入前请确保您已进入课表页面(运行->课表查询->我的课表)有任何问题请通过GitHub/QQ联系开发者。"
+    description: "更新:您登录后直接点击导入即可食用,无需进入课表界面。有任何问题请通过GitHub/QQ联系开发者。"
