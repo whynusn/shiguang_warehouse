@@ -265,13 +265,13 @@ function extractAndMergeCourse(titleDetail) {
 
 function fixSection(section) {
     let realSection = section;
-    if (section > 5) realSection -= 1; // 减去中午那节课
-    if (section > 10) realSection -= 1; // 减去晚餐那节课
+    if (section > 5) realSection -= 1; // 超过午餐，向上平移1格
+    if (section > 10) realSection -= 1; // 超过晚餐，再向上平移1格
     return realSection;
 }
 
 /**
- * 解析函数  Gemini所写  
+ * 解析所有课程并应用修正 
  */
 function parseAllCourses(rawArrangedList) {
     const finalCourses = [];
@@ -282,28 +282,36 @@ function parseAllCourses(rawArrangedList) {
             const mergedResult = extractAndMergeCourse(item.titleDetail);
             if (!mergedResult) return;
 
-            // 优先使用数据里的数字字段，因为 titleDetail 有时会被截断
-            const sSection = parseInt(item.beginSection || item.startSection);
-            const eSection = parseInt(item.endSection);
+            // 1. 获取原始节次数据
+            const rawStart = parseInt(item.beginSection || item.startSection);
+            const rawEnd = parseInt(item.endSection);
             const day = parseInt(item.dayOfWeek || item.day);
+
+            // 2. 调用 fixSection 解决错位
+            const sSection = fixSection(rawStart);
+            const eSection = fixSection(rawEnd);
 
             mergedResult.segments.forEach(seg => {
                 if (!isNaN(sSection) && !isNaN(eSection)) {
+                    // 3. 处理地点显示问题（去重：避免出现 "励行楼 励行楼xxx"）
+                    let finalPos = seg.location;
+                    if (seg.building && !seg.location.includes(seg.building)) {
+                        finalPos = seg.building + " " + seg.location;
+                    }
+
                     finalCourses.push({
                         name: mergedResult.courseName,
                         teacher: seg.teacher,
-                        position: (seg.building + " " + seg.location).trim(),
+                        position: finalPos.trim(),
                         day: day, 
-                        startSection: sSection,
-                        endSection: eSection,
-                        weeks: seg.weeks,
-                        startTime: seg.startTime, // 记录开始时间防止后续需要
-                        endTime: seg.endTime
+                        startSection: sSection, // 写入修正后的开始节次
+                        endSection: eSection,   // 写入修正后的结束节次
+                        weeks: seg.weeks
                     });
                 }
             });
         }
-    }); 
+    });
 
     return finalCourses;
 }
