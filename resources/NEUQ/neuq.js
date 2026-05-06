@@ -179,7 +179,10 @@
                 }
             }
             name = cleanCourseName(name);
-            const position = unquoteJsLiteral(args[5]);
+            let position = unquoteJsLiteral(args[5]); 
+            position = position.replace(/"/g, "")
+                   .replace(/\(.*\)/g, "")
+                   .trim();
             const weekBitmap = unquoteJsLiteral(args[6]);
             const weeks = normalizeWeeks(parseValidWeeksBitmap(weekBitmap));
             if (!name) continue;
@@ -294,7 +297,7 @@
         const selectIndex = await window.AndroidBridgePromise.showSingleSelection(
             "请选择导入学期",
             JSON.stringify(recentSemesters.map((s) => s.name || s.id)),
-            recentSemesters.length - 1
+            -1
         );
         if (selectIndex === null) {
             AndroidBridge.showToast("已取消导入");
