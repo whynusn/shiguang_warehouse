@@ -446,3 +446,8 @@ schools:
     name: "中国石油大学(华东)"
     initial: "Z"
     resource_folder: "UPC"   
+    
+  - id: "TJAU"
+    name: "天津农学院"
+    initial: "T"
+    resource_folder: "TJAU"     
