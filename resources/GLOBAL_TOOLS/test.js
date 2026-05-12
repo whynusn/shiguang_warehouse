@@ -98,11 +98,11 @@ function isPeriodLabel(text) {
 
 /**
  * 从节次标签文本解析出节次数字数组
- * "1" → [1], "3-4" → [3,4], "1\n2" → [1,2], "晚上" → [11,12,13]
+ * "1" → [1], "3-4" → [3,4], "1\n2" → [1,2], "晚上" → [10,11,12]
  */
 function parsePeriodText(text) {
     const t = text.trim();
-    if (t.includes('晚')) return [11, 12, 13];
+    if (t.includes('晚')) return [10, 11, 12];
 
     // 优先检查原始文本中是否有换行或空白分隔符（如 "1\n2"）
     // 按 \n 或空白分割，每个部分独立解析为单个节次
