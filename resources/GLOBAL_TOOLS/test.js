@@ -382,21 +382,23 @@ function parseCourseTableFromCurrentPage() {
 
 function getTimeSlots() {
     return [
-        { number: 1, startTime: "08:00", endTime: "08:45" },
-        { number: 2, startTime: "08:50", endTime: "09:35" },
-        { number: 3, startTime: "09:50", endTime: "10:35" },
-        { number: 4, startTime: "10:40", endTime: "11:25" },
-        { number: 5, startTime: "11:30", endTime: "12:15" },
-        { number: 6, startTime: "14:00", endTime: "14:45" },
-        { number: 7, startTime: "14:50", endTime: "15:35" },
-        { number: 8, startTime: "15:50", endTime: "16:35" },
-        { number: 9, startTime: "16:40", endTime: "17:25" },
-        { number: 10, startTime: "18:30", endTime: "19:15" },
-        { number: 11, startTime: "19:20", endTime: "20:05" },
-        { number: 12, startTime: "20:10", endTime: "20:55" },
-        { number: 13, startTime: "21:00", endTime: "21:45" },
+        { number: 1, startTime: "08:00", endTime: "08:40" },
+        { number: 2, startTime: "08:50", endTime: "09:30" },
+        { number: 3, startTime: "09:40", endTime: "10:20" },
+        { number: 4, startTime: "10:30", endTime: "11:10" },
+        { number: 5, startTime: "11:20", endTime: "12:00" },
+        { number: 6, startTime: "14:00", endTime: "14:40" },
+        { number: 7, startTime: "14:50", endTime: "15:30" },
+        { number: 8, startTime: "15:40", endTime: "16:20" },
+        { number: 9, startTime: "16:30", endTime: "17:10" },
+        { number: 9, startTime: "19:00", endTime: "19:40" },
+        { number: 10, startTime: "19:50", endTime: "20:30" },
+        { number: 11, startTime: "20:40", endTime: "21:20" },
     ];
 }
+
+
+
 
 // ---------- 用户交互 ----------
 
@@ -408,13 +410,37 @@ async function promptUserToStart() {
     );
 }
 
-async function getTotalWeeks() {
-    return await window.AndroidBridgePromise.showPrompt(
-        "设置本学期总周数",
-        "请输入本学期总周数（默认 20，范围 1-55）:",
-        "20",
-        "validateWeeksInput"
-    );
+/**
+ * 从页面上当前选中的学期下拉框中读取学期开学日期。
+ * 下拉框的 value 格式为 "2026/9/1 0:00:00"（开学日期 + 时间）
+ */
+function getSemesterConfig() {
+    const ddl = document.getElementById('_ctl1_ddlSterm');
+    if (!ddl || !ddl.value) {
+        console.warn("[JXNU] 未找到学期下拉框");
+        return null;
+    }
+    const dateStr = ddl.value.split(' ')[0]; // "2026/9/1 0:00:00" → "2026/9/1"
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) {
+        console.warn("[JXNU] 无法解析学期日期:", ddl.value);
+        return null;
+    }
+    const year = parseInt(parts[0]);
+    const month = parseInt(parts[1]);
+    const day = parseInt(parts[2]);
+    if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+
+    // 格式化 YYYY-MM-DD
+    const pad = (n) => n.toString().padStart(2, '0');
+    const semesterStartDate = `${year}-${pad(month)}-${pad(day)}`;
+
+    // 推算总周数：春季学期约20周，秋季学期约20周
+    // 春季学期（3月开学）→ 20周，秋季学期（9月开学）→ 20周
+    const semesterTotalWeeks = (month >= 8) ? 20 : 20;
+
+    console.log(`[JXNU] 学期配置: start=${semesterStartDate}, weeks=${semesterTotalWeeks}`);
+    return { semesterStartDate, semesterTotalWeeks };
 }
 
 // ---------- 主流程 ----------
@@ -424,10 +450,9 @@ async function run() {
         const confirmed = await promptUserToStart();
         if (!confirmed) { AndroidBridge.showToast("用户取消了导入。"); return; }
 
-        const weeksInput = await getTotalWeeks();
-        if (weeksInput === null) { AndroidBridge.showToast("导入已取消。"); return; }
-        const totalWeeks = parseInt(weeksInput, 10);
-        if (isNaN(totalWeeks) || totalWeeks < 1) { AndroidBridge.showToast("周数设置无效。"); return; }
+        // 从学期下拉框自动读取开学日期和总周数
+        const semesterCfg = getSemesterConfig();
+        const totalWeeks = (semesterCfg && semesterCfg.semesterTotalWeeks) ? semesterCfg.semesterTotalWeeks : 20;
         const defaultWeeks = Array.from({ length: totalWeeks }, (_, i) => i + 1);
 
         AndroidBridge.showToast("正在解析课表数据...");
@@ -469,6 +494,16 @@ async function run() {
             console.error("[JXNU] 保存课程失败:", saveErr);
             await window.AndroidBridgePromise.showAlert("保存课程失败", saveErr.message || String(saveErr), "确定");
             return;
+        }
+
+        // 保存学期配置（开学日期、总周数）
+        if (semesterCfg) {
+            try {
+                await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(semesterCfg));
+                console.log("[JXNU] 学期配置已保存:", semesterCfg);
+            } catch (cfgErr) {
+                console.error("[JXNU] 保存学期配置失败:", cfgErr);
+            }
         }
 
         const timeSlots = getTimeSlots();
