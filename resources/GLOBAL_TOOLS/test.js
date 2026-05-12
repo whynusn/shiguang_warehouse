@@ -64,10 +64,24 @@ function parseCellText(line) {
 
 /**
  * 判断单元格文本是否是"节次标签"
+ * 支持格式：
+ *   "3"       → 单个节次
+ *   "1\n2"    → 换行分隔的多节次（<br> 在 textContent 中变 \n）
+ *   "6\n7"    → 同上
+ *   "1-2"     → 短横分隔
+ *   "晚上"    → 晚间节次
  */
 function isPeriodLabel(text) {
     const t = text.trim();
     if (!t) return false;
+
+    // 原始文本含换行 → 按换行拆分，每部分都应是有效节次数字
+    if (t.includes('\n')) {
+        const parts = t.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+        if (parts.length >= 2) {
+            return parts.every(p => /^\d{1,2}$/.test(p) && parseInt(p) >= 1 && parseInt(p) <= UNIT_COUNT);
+        }
+    }
 
     const cleaned = t.replace(/\s+/g, '');
     if (/^[1-9]$/.test(cleaned)) return true;
@@ -367,15 +381,27 @@ function parseCourseTableFromCurrentPage() {
 
     console.log(`[JXNU] 共 ${totalPeriodRows} 行数据`);
 
-    const seen = new Set();
-    const deduped = [];
+    // ---- Step: 合并相邻节次的相同课程 ----
+    // 如 {name:"高数",day:1,section:[1,2]} + {name:"高数",day:1,section:[3,3]}
+    // → {name:"高数",day:1,section:[1,3]}
+    courses.sort((a, b) => a.day - b.day || a.startSection - b.startSection);
+    const merged = [];
     for (const c of courses) {
-        const key = `${c.name}|${c.day}|${c.startSection}|${c.endSection}|${c.teacher}|${c.position}`;
-        if (!seen.has(key)) { seen.add(key); deduped.push(c); }
+        if (merged.length === 0) { merged.push(c); continue; }
+        const prev = merged[merged.length - 1];
+        const sameCourse = prev.name === c.name && prev.teacher === c.teacher
+            && prev.position === c.position && prev.day === c.day;
+        if (sameCourse && prev.endSection + 1 === c.startSection) {
+            // 合并：扩展前一条的 endSection
+            prev.endSection = c.endSection;
+            console.log(`[JXNU] 合并课程: "${c.name}" 周${c.day} ${c.startSection}节→${prev.endSection}节`);
+        } else {
+            merged.push(c);
+        }
     }
 
-    console.log(`[JXNU] 完成: ${courses.length} → ${deduped.length} 条`);
-    return { courses: deduped, html: pageHtml };
+    console.log(`[JXNU] 合并后: ${courses.length} → ${merged.length} 条`);
+    return { courses: merged, html: pageHtml };
 }
 
 // ---------- 时间段配置 ----------
@@ -435,9 +461,7 @@ function getSemesterConfig() {
     const pad = (n) => n.toString().padStart(2, '0');
     const semesterStartDate = `${year}-${pad(month)}-${pad(day)}`;
 
-    // 推算总周数：春季学期约20周，秋季学期约20周
-    // 春季学期（3月开学）→ 20周，秋季学期（9月开学）→ 20周
-    const semesterTotalWeeks = (month >= 8) ? 20 : 20;
+    const semesterTotalWeeks = 20;
 
     console.log(`[JXNU] 学期配置: start=${semesterStartDate}, weeks=${semesterTotalWeeks}`);
     return { semesterStartDate, semesterTotalWeeks };
