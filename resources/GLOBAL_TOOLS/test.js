@@ -84,11 +84,25 @@ function isPeriodLabel(text) {
 
 /**
  * 从节次标签文本解析出节次数字数组
- * "1" → [1], "3-4" → [3,4], "晚上" → [11,12,13], "12" → [1,2]
+ * "1" → [1], "3-4" → [3,4], "1\n2" → [1,2], "晚上" → [11,12,13]
  */
 function parsePeriodText(text) {
     const t = text.trim();
     if (t.includes('晚')) return [11, 12, 13];
+
+    // 优先检查原始文本中是否有换行或空白分隔符（如 "1\n2"）
+    // 按 \n 或空白分割，每个部分独立解析为单个节次
+    if (t.includes('\n') || t.includes('\r') || /\s{2,}/.test(t)) {
+        const parts = t.split(/[\n\r]+/).map(s => s.trim()).filter(s => s.length > 0);
+        if (parts.length >= 2) {
+            const nums = [];
+            for (const p of parts) {
+                const n = parseInt(p);
+                if (n >= 1 && n <= UNIT_COUNT && !nums.includes(n)) nums.push(n);
+            }
+            if (nums.length >= 2) { nums.sort((a, b) => a - b); return nums; }
+        }
+    }
 
     const cleaned = t.replace(/\s+/g, '');
     const rangeMatch = cleaned.match(/^(\d{1,2})[-–,]\s*(\d{1,2})$/);
@@ -102,12 +116,31 @@ function parsePeriodText(text) {
         }
     }
 
+    // 检查 cleaned 是否可以拆分为多个单个数字（如 "12" → [1,2]）
+    // 规则：如果 cleaned 长度 > 1 且每个字符都是 1-9 的数字
+    if (cleaned.length > 1) {
+        const allSingleDigits = [...cleaned].every(ch => /^[1-9]$/.test(ch));
+        if (allSingleDigits) {
+            const nums = [];
+            for (const ch of cleaned) {
+                const n = parseInt(ch);
+                if (!nums.includes(n)) nums.push(n);
+            }
+            nums.sort((a, b) => a - b);
+            // 确认是连续的区间
+            if (nums.length >= 2 && nums[nums.length - 1] - nums[0] + 1 === nums.length) {
+                return nums;
+            }
+        }
+    }
+
     const singleMatch = cleaned.match(/^(\d{1,2})$/);
     if (singleMatch) {
         const num = parseInt(singleMatch[1]);
         if (num >= 1 && num <= UNIT_COUNT) return [num];
     }
 
+    // 逐个字符解析兜底
     const nums = [];
     for (let i = 0; i < cleaned.length; i++) {
         const n = parseInt(cleaned[i]);
@@ -186,74 +219,100 @@ function parseCourseTableFromCurrentPage() {
         return { courses, html: pageHtml };
     }
 
-    // 从真实 HTML 得知表格结构是 9 列（非 8 列）：
-    //   col 0: 分组标签（"上午"/"下午"，有 rowspan）
-    //   col 1: 节次标签（"1\n2"、"3"、"4" ...）
-    //   col 2-8: 周一~周日的课程数据
     const headerRow = rows[headerRowIdx];
     const totalCols = headerRow.cells.length;
+    console.log(`[JXNU] 表头共 ${totalCols} 列`);
+    for (let c = 0; c < totalCols; c++) {
+        console.log(`[JXNU]   列 ${c}: "${headerRow.cells[c].textContent.trim().replace(/\s+/g, ' ')}"`);
+    }
+
+    // 动态检测表格结构：找到"星期一"在哪一列
+    const dayNamesFull = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+    let firstDayCol = -1;
+    for (let c = 0; c < totalCols; c++) {
+        const headerText = headerRow.cells[c].textContent.trim().replace(/\s+/g, '');
+        if (headerText.includes('星期一')) { firstDayCol = c; break; }
+    }
+
+    if (firstDayCol < 0) {
+        console.warn("[JXNU] 未找到星期一的表头列");
+        return { courses, html: pageHtml };
+    }
 
     // dayColMap: 表头列索引 → 星期几 (1-7)
-    // 课程数据从第 2 列开始（col 2 = 星期一）
     const dayColMap = {};
     let dayCounter = 1;
-    for (let c = 2; c < totalCols && dayCounter <= 7; c++) {
+    for (let c = firstDayCol; c < totalCols && dayCounter <= 7; c++) {
         dayColMap[c] = dayCounter;
         dayCounter++;
     }
+    console.log(`[JXNU] 星期一在列 ${firstDayCol}，dayColMap:`, JSON.stringify(dayColMap));
 
-    // rowspan 追踪：rowspanActive[col] > 0 表示第 col 列被上层 rowspan 覆盖
+    // periodLabelCol: 节次标签在哪一列？（星期一前一列）
+    const periodLabelCol = firstDayCol - 1;
+    console.log(`[JXNU] 节次标签在列 ${periodLabelCol}`);
+
+    // rowspan 追踪
     const rowspanActive = new Array(totalCols).fill(0);
+    let totalCourseRows = 0;
 
-    // 遍历数据行
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
         const cells = row.cells;
-        if (cells.length < 2) continue;
+        if (cells.length < 2) {
+            console.log(`[JXNU]   行 ${r}: 仅有 ${cells.length} 格，跳过（可能为分隔行）`);
+            continue;
+        }
 
-        // 用列遍历法：按 header 列顺序遍历，跳过 rowspan 覆盖的列，
-        // 将 cells[cellIdx] 映射到正确的 header 列
         let periodText = '';
         let periods = [];
         let foundPeriod = false;
-        let courseData = []; // [{cell, col, day}, ...]
+        let courseData = [];
 
         let cellIdx = 0;
         for (let col = 0; col < totalCols && cellIdx < cells.length; col++) {
             if (rowspanActive[col] > 0) {
                 rowspanActive[col]--;
-                continue; // 此列被覆盖，cells 中没有对应的格
+                continue;
             }
 
             const cell = cells[cellIdx];
             cellIdx++;
 
-            // 记录此单元格的 rowspan
             if (cell.rowSpan > 1) {
                 rowspanActive[col] = cell.rowSpan - 1;
             }
 
             const text = cell.textContent.trim();
 
-            if (col === 1) {
-                // 节次标签列
+            if (col === periodLabelCol) {
+                if (text) {
+                    console.log(`[JXNU]   行 ${r} 节次标签: "${text.replace(/\s+/g, ' ')}" isPeriod=${isPeriodLabel(text)}`);
+                }
                 if (text && isPeriodLabel(text)) {
                     periodText = text;
                     periods = parsePeriodText(text);
                     foundPeriod = periods.length > 0;
+                    if (foundPeriod) console.log(`[JXNU]   行 ${r} → periods: [${periods}]`);
                 }
             } else if (dayColMap[col]) {
-                // 课程列
-                if (text && text.length >= 2) {
+                if (text && text.length >= 2 && text !== '\u00a0') {
                     courseData.push({ cell, text, day: dayColMap[col] });
+                    if (text.length > 2) {
+                        console.log(`[JXNU]   行 ${r} 列 ${col}(星期${dayColMap[col]}): "${text.replace(/\s+/g, ' ').substring(0, 50)}"`);
+                    }
                 }
             }
-            // col 0 = 分组标签（上午/下午），跳过
         }
 
-        if (!foundPeriod) continue;
+        if (!foundPeriod) {
+            console.log(`[JXNU]   行 ${r}: 未找到有效节次标签，跳过`);
+            continue;
+        }
 
-        // 处理此行的所有课程数据
+        totalCourseRows++;
+        let rowCourseCount = 0;
+
         for (const { cell, text, day } of courseData) {
             const cleanText = text.replace(/\s+/g, '');
             if (['上午', '下午', '晚上', '中午', '中 午', '午休', '节次'].some(k => cleanText === k)) continue;
@@ -278,7 +337,10 @@ function parseCourseTableFromCurrentPage() {
 
             if (!name) {
                 const parsed = parseCellText(text);
-                if (!parsed || !parsed.name) continue;
+                if (!parsed || !parsed.name) {
+                    console.log(`[JXNU]     parseCellText 失败: "${text.replace(/\s+/g, ' ').substring(0, 60)}"`);
+                    continue;
+                }
                 name = parsed.name;
                 teacher = parsed.teacher || teacher;
                 room = parsed.room || room;
@@ -292,8 +354,12 @@ function parseCourseTableFromCurrentPage() {
                 day, startSection: periods[0],
                 endSection: periods[periods.length - 1], weeks: [],
             });
+            rowCourseCount++;
         }
+        console.log(`[JXNU]   行 ${r}: 提取到 ${rowCourseCount} 门课程`);
     }
+
+    console.log(`[JXNU] 共 ${totalCourseRows} 行课表数据行`);
 
     // 去重
     const seen = new Set();
