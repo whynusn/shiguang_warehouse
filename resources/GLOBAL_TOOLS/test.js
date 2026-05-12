@@ -156,13 +156,28 @@ function parsePeriodText(text) {
 // ---------- DOM 解析（当前页面） ----------
 
 /**
- * 在指定 window 对象中递归查找包含"星期一"的课表表格。
+ * 在指定 window 对象中递归查找课表表格。
+ * 匹配条件：表格第一行（表头）必须包含"星期一"且至少有 7 列（周一到周日）。
  * 支持表格位于 iframe 内的情况。
  */
 function findCourseTable(win) {
     try {
         for (const t of win.document.querySelectorAll('table')) {
-            if (t.textContent.includes('星期一')) return t;
+            // 初级筛选：表格内容要包含"星期一"
+            if (!t.textContent.includes('星期一')) continue;
+            // 中级筛选：表格第一行必须有至少 7 列
+            if (t.rows.length === 0) continue;
+            const firstRow = t.rows[0];
+            if (firstRow.cells.length < 7) continue;
+            // 高级筛选：第一行某列确实包含"星期一"文本
+            let hasMondayHeader = false;
+            for (let c = 0; c < firstRow.cells.length; c++) {
+                if (firstRow.cells[c].textContent.includes('星期一')) {
+                    hasMondayHeader = true;
+                    break;
+                }
+            }
+            if (hasMondayHeader) return t;
         }
     } catch (e) {
         // 跨域 iframe 无法访问，跳过
@@ -222,101 +237,99 @@ function parseCourseTableFromCurrentPage() {
     const headerRow = rows[headerRowIdx];
     const totalCols = headerRow.cells.length;
     console.log(`[JXNU] 表头共 ${totalCols} 列`);
-    for (let c = 0; c < totalCols; c++) {
-        console.log(`[JXNU]   列 ${c}: "${headerRow.cells[c].textContent.trim().replace(/\s+/g, ' ')}"`);
-    }
 
-    // 动态检测表格结构：找到"星期一"在哪一列
-    const dayNamesFull = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+    // 定位"星期一"所在列
     let firstDayCol = -1;
     for (let c = 0; c < totalCols; c++) {
-        const headerText = headerRow.cells[c].textContent.trim().replace(/\s+/g, '');
-        if (headerText.includes('星期一')) { firstDayCol = c; break; }
+        const t = headerRow.cells[c].textContent.trim().replace(/\s+/g, '');
+        console.log(`[JXNU]   列 ${c}: "${t}"`);
+        if (t.includes('星期一')) firstDayCol = c;
     }
-
     if (firstDayCol < 0) {
         console.warn("[JXNU] 未找到星期一的表头列");
         return { courses, html: pageHtml };
     }
 
-    // dayColMap: 表头列索引 → 星期几 (1-7)
+    // dayColMap: 表头列索引 → 星期几
     const dayColMap = {};
-    let dayCounter = 1;
-    for (let c = firstDayCol; c < totalCols && dayCounter <= 7; c++) {
-        dayColMap[c] = dayCounter;
-        dayCounter++;
+    for (let c = firstDayCol; c < totalCols && c - firstDayCol < 7; c++) {
+        dayColMap[c] = c - firstDayCol + 1;
     }
     console.log(`[JXNU] 星期一在列 ${firstDayCol}，dayColMap:`, JSON.stringify(dayColMap));
 
-    // periodLabelCol: 节次标签在哪一列？（星期一前一列）
+    // periodLabelCol = 星期一的前一列
     const periodLabelCol = firstDayCol - 1;
-    console.log(`[JXNU] 节次标签在列 ${periodLabelCol}`);
+    console.log(`[JXNU] periodLabelCol=${periodLabelCol}`);
 
     // rowspan 追踪
     const rowspanActive = new Array(totalCols).fill(0);
-    let totalCourseRows = 0;
+    let totalPeriodRows = 0;
 
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
         const cells = row.cells;
         if (cells.length < 2) {
-            console.log(`[JXNU]   行 ${r}: 仅有 ${cells.length} 格，跳过（可能为分隔行）`);
+            console.log(`[JXNU]   行 ${r}: 只有 ${cells.length} 格（分隔行）`);
             continue;
         }
 
-        let periodText = '';
-        let periods = [];
-        let foundPeriod = false;
-        let courseData = [];
-
+        // ---- 用 Column-pass 算法遍历 ----
+        // 按 header 列顺序扫，跳过 rowspan 覆盖的列
+        let periodText = '', foundPeriod = false;
+        let periods = [], courseData = [];
         let cellIdx = 0;
+
         for (let col = 0; col < totalCols && cellIdx < cells.length; col++) {
-            if (rowspanActive[col] > 0) {
-                rowspanActive[col]--;
-                continue;
-            }
+            if (rowspanActive[col] > 0) { rowspanActive[col]--; continue; }
 
-            const cell = cells[cellIdx];
-            cellIdx++;
-
-            if (cell.rowSpan > 1) {
-                rowspanActive[col] = cell.rowSpan - 1;
-            }
+            const cell = cells[cellIdx++];
+            if (cell.rowSpan > 1) rowspanActive[col] = cell.rowSpan - 1;
 
             const text = cell.textContent.trim();
 
+            // 方案A：如果 col == periodLabelCol，用列位置判断
+            // 方案B：同时检查 col > periodLabelCol 的短表格情况
             if (col === periodLabelCol) {
-                if (text) {
-                    console.log(`[JXNU]   行 ${r} 节次标签: "${text.replace(/\s+/g, ' ')}" isPeriod=${isPeriodLabel(text)}`);
-                }
                 if (text && isPeriodLabel(text)) {
-                    periodText = text;
-                    periods = parsePeriodText(text);
+                    periodText = text; periods = parsePeriodText(text);
                     foundPeriod = periods.length > 0;
-                    if (foundPeriod) console.log(`[JXNU]   行 ${r} → periods: [${periods}]`);
                 }
-            } else if (dayColMap[col]) {
-                if (text && text.length >= 2 && text !== '\u00a0') {
+                if (foundPeriod) console.log(`[JXNU]   行${r} period: "${text.replace(/\s+/g,' ')}" → [${periods}]`);
+            }
+
+            // 如果是课程列，尝试从中提取课程名（用 isPeriodLabel 排除误判）
+            if (dayColMap[col] && text && text.length >= 2 && text !== '\u00a0') {
+                const cleanText = text.replace(/\s+/g, '');
+                const skipWords = ['上午', '下午', '晚上', '中午', '中 午', '午休', '节次'];
+                if (!skipWords.includes(cleanText) && text.length > 2) {
                     courseData.push({ cell, text, day: dayColMap[col] });
-                    if (text.length > 2) {
-                        console.log(`[JXNU]   行 ${r} 列 ${col}(星期${dayColMap[col]}): "${text.replace(/\s+/g, ' ').substring(0, 50)}"`);
-                    }
+                    console.log(`[JXNU]   行${r} col${col}(周${dayColMap[col]}): "${text.replace(/\s+/g,' ').substring(0,60)}"`);
+                }
+            }
+        }
+
+        // 如果没找到 period → 尝试方案C：扫描当前行所有格找 period
+        if (!foundPeriod) {
+            for (let ci = 0; ci < cells.length; ci++) {
+                const t = cells[ci].textContent.trim();
+                if (t && isPeriodLabel(t)) {
+                    periodText = t; periods = parsePeriodText(t);
+                    foundPeriod = periods.length > 0;
+                    console.log(`[JXNU]   行${r} [方案C] 扫描找到 period: "${t.replace(/\s+/g,' ')}" 在 cell[${ci}]`);
+                    break;
                 }
             }
         }
 
         if (!foundPeriod) {
-            console.log(`[JXNU]   行 ${r}: 未找到有效节次标签，跳过`);
+            console.log(`[JXNU]   行${r}: 未找到节次标签`);
             continue;
         }
 
-        totalCourseRows++;
-        let rowCourseCount = 0;
+        totalPeriodRows++;
+        let rowCount = 0;
 
         for (const { cell, text, day } of courseData) {
-            const cleanText = text.replace(/\s+/g, '');
-            if (['上午', '下午', '晚上', '中午', '中 午', '午休', '节次'].some(k => cleanText === k)) continue;
-
             let name = '', teacher = '', room = '';
             const titleEl = cell.querySelector('.title font, .title');
 
@@ -330,38 +343,30 @@ function parseCourseTableFromCurrentPage() {
                         const t = pEls[0].textContent.trim();
                         if (/[楼馆教栋区斋轩堂室]/.test(t)) room = t;
                     }
-                } else {
-                    name = '';
-                }
+                } else { name = ''; }
             }
 
             if (!name) {
                 const parsed = parseCellText(text);
                 if (!parsed || !parsed.name) {
-                    console.log(`[JXNU]     parseCellText 失败: "${text.replace(/\s+/g, ' ').substring(0, 60)}"`);
+                    console.log(`[JXNU]     parseCellText失败: "${text.replace(/\s+/g,' ').substring(0,60)}"`);
                     continue;
                 }
-                name = parsed.name;
-                teacher = parsed.teacher || teacher;
-                room = parsed.room || room;
+                name = parsed.name; teacher = parsed.teacher || teacher; room = parsed.room || room;
             }
 
             name = name.replace(/\s+/g, '');
             if (!/[\u4e00-\u9fa5a-zA-Z]/.test(name)) continue;
 
-            courses.push({
-                name, teacher: teacher || '', position: room || '',
-                day, startSection: periods[0],
-                endSection: periods[periods.length - 1], weeks: [],
-            });
-            rowCourseCount++;
+            courses.push({ name, teacher: teacher || '', position: room || '',
+                day, startSection: periods[0], endSection: periods[periods.length - 1], weeks: [] });
+            rowCount++;
         }
-        console.log(`[JXNU]   行 ${r}: 提取到 ${rowCourseCount} 门课程`);
+        console.log(`[JXNU]   行${r}: 解析到 ${rowCount} 门课`);
     }
 
-    console.log(`[JXNU] 共 ${totalCourseRows} 行课表数据行`);
+    console.log(`[JXNU] 共 ${totalPeriodRows} 行数据`);
 
-    // 去重
     const seen = new Set();
     const deduped = [];
     for (const c of courses) {
@@ -369,7 +374,7 @@ function parseCourseTableFromCurrentPage() {
         if (!seen.has(key)) { seen.add(key); deduped.push(c); }
     }
 
-    console.log(`[JXNU] 解析完成，原始=${courses.length}，去重后=${deduped.length} 条课程`);
+    console.log(`[JXNU] 完成: ${courses.length} → ${deduped.length} 条`);
     return { courses: deduped, html: pageHtml };
 }
 
