@@ -417,9 +417,9 @@ function getTimeSlots() {
         { number: 7, startTime: "14:50", endTime: "15:30" },
         { number: 8, startTime: "15:40", endTime: "16:20" },
         { number: 9, startTime: "16:30", endTime: "17:10" },
-        { number: 9, startTime: "19:00", endTime: "19:40" },
-        { number: 10, startTime: "19:50", endTime: "20:30" },
-        { number: 11, startTime: "20:40", endTime: "21:20" },
+        { number: 10, startTime: "19:00", endTime: "19:40" },
+        { number: 11, startTime: "19:50", endTime: "20:30" },
+        { number: 12, startTime: "20:40", endTime: "21:20" },
     ];
 }
 
