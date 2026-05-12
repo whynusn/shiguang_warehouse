@@ -160,23 +160,19 @@ function parseCourseTableFromCurrentPage() {
     const courses = [];
     const dayNames = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
 
-    // 在顶层 window 和所有 iframe 中查找课表表格
     const table = findCourseTable(window);
     if (!table) {
         console.warn("[JXNU] 未找到课表表格");
         return { courses, html: '' };
     }
 
-    // 备份当前页面 HTML 用于调试
     const pageHtml = document.documentElement.outerHTML;
-
     const rows = table.rows;
     if (rows.length < 3) {
         console.warn("[JXNU] 课表格行数不足:", rows.length);
         return { courses, html: pageHtml };
     }
 
-    // 找到表头行
     let headerRowIdx = -1;
     for (let i = 0; i < Math.min(rows.length, 3); i++) {
         const rowText = rows[i].textContent.trim();
@@ -190,14 +186,24 @@ function parseCourseTableFromCurrentPage() {
         return { courses, html: pageHtml };
     }
 
-    // 建立列→星期映射
+    // 从真实 HTML 得知表格结构是 9 列（非 8 列）：
+    //   col 0: 分组标签（"上午"/"下午"，有 rowspan）
+    //   col 1: 节次标签（"1\n2"、"3"、"4" ...）
+    //   col 2-8: 周一~周日的课程数据
     const headerRow = rows[headerRowIdx];
+    const totalCols = headerRow.cells.length;
+
+    // dayColMap: 表头列索引 → 星期几 (1-7)
+    // 课程数据从第 2 列开始（col 2 = 星期一）
     const dayColMap = {};
     let dayCounter = 1;
-    for (let c = 1; c < headerRow.cells.length && dayCounter <= 7; c++) {
+    for (let c = 2; c < totalCols && dayCounter <= 7; c++) {
         dayColMap[c] = dayCounter;
         dayCounter++;
     }
+
+    // rowspan 追踪：rowspanActive[col] > 0 表示第 col 列被上层 rowspan 覆盖
+    const rowspanActive = new Array(totalCols).fill(0);
 
     // 遍历数据行
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
@@ -205,27 +211,53 @@ function parseCourseTableFromCurrentPage() {
         const cells = row.cells;
         if (cells.length < 2) continue;
 
-        const periodText = cells[0].textContent.trim();
-        if (!periodText || !isPeriodLabel(periodText)) continue;
+        // 用列遍历法：按 header 列顺序遍历，跳过 rowspan 覆盖的列，
+        // 将 cells[cellIdx] 映射到正确的 header 列
+        let periodText = '';
+        let periods = [];
+        let foundPeriod = false;
+        let courseData = []; // [{cell, col, day}, ...]
 
-        const periods = parsePeriodText(periodText);
-        if (periods.length === 0) continue;
-
-        let cellIdx = 1;
-        for (let col = 1; col <= 7 && cellIdx < cells.length; col++) {
-            const day = dayColMap[col];
-            if (!day) continue;
+        let cellIdx = 0;
+        for (let col = 0; col < totalCols && cellIdx < cells.length; col++) {
+            if (rowspanActive[col] > 0) {
+                rowspanActive[col]--;
+                continue; // 此列被覆盖，cells 中没有对应的格
+            }
 
             const cell = cells[cellIdx];
             cellIdx++;
 
-            const cellText = cell.textContent.trim();
-            if (!cellText || cellText.length < 2) continue;
+            // 记录此单元格的 rowspan
+            if (cell.rowSpan > 1) {
+                rowspanActive[col] = cell.rowSpan - 1;
+            }
 
-            const cleanText = cellText.replace(/\s+/g, '');
+            const text = cell.textContent.trim();
+
+            if (col === 1) {
+                // 节次标签列
+                if (text && isPeriodLabel(text)) {
+                    periodText = text;
+                    periods = parsePeriodText(text);
+                    foundPeriod = periods.length > 0;
+                }
+            } else if (dayColMap[col]) {
+                // 课程列
+                if (text && text.length >= 2) {
+                    courseData.push({ cell, text, day: dayColMap[col] });
+                }
+            }
+            // col 0 = 分组标签（上午/下午），跳过
+        }
+
+        if (!foundPeriod) continue;
+
+        // 处理此行的所有课程数据
+        for (const { cell, text, day } of courseData) {
+            const cleanText = text.replace(/\s+/g, '');
             if (['上午', '下午', '晚上', '中午', '中 午', '午休', '节次'].some(k => cleanText === k)) continue;
 
-            // try structured extraction first
             let name = '', teacher = '', room = '';
             const titleEl = cell.querySelector('.title font, .title');
 
@@ -240,13 +272,12 @@ function parseCourseTableFromCurrentPage() {
                         if (/[楼馆教栋区斋轩堂室]/.test(t)) room = t;
                     }
                 } else {
-                    name = ''; // structured title not valid, fallback
+                    name = '';
                 }
             }
 
-            // fallback to text parsing
             if (!name) {
-                const parsed = parseCellText(cellText);
+                const parsed = parseCellText(text);
                 if (!parsed || !parsed.name) continue;
                 name = parsed.name;
                 teacher = parsed.teacher || teacher;
@@ -340,9 +371,12 @@ async function run() {
                     '2. 已选择学年学期并点击【查询】\n' +
                     '3. 课表已正常显示（页面中能看到"星期一"表头）';
             } else if (pageHtml.includes('星期一') && document.querySelectorAll('table').length > 0) {
-                detail = '已找到包含"星期一"的表格，但未能从中解析出有效的课程数据。\n' +
-                    '这可能是因为教务系统的表格结构与预期不符。\n' +
-                    '请确认课表页面已正确显示（而非"暂无课表"）。';
+                detail = '已找到包含"星期一"的课表表格，但未能从中解析出有效的课程数据。\n' +
+                    '请确认已从下拉菜单中选择了正确的学年学期，并点击了【查询/确定】按钮。\n\n' +
+                    '常见问题：\n' +
+                    '1. 页面加载后未点击【查询】按钮\n' +
+                    '2. 当前学期没有课程安排（课表空白）\n' +
+                    '3. 选错了学年或学期';
             } else {
                 detail = '未能在当前页面中找到课表数据。\n' +
                     '请确认已在学生课表查询页面正确选择了学期并点击了【查询】。';
